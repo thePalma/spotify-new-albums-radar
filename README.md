@@ -33,7 +33,7 @@ $ export SPOTIFY_USERNAME=<<your spotify username>>
 Running the tool:
 
 ```bash
-$ python3 spotify-liked-cleanup.py
+$ python3 spotify-new-albums-radar.py
 ```
 
 ## Notes
