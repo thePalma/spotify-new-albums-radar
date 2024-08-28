@@ -1,4 +1,4 @@
-# Spotify New Album Release Radar
+# Spotify New Albums Release Radar
 
 This project stems from my need to automate the generation of a playlist of new albums to listen to each week.
 Spotify generates a playlist of new music from the artists we follow but does not include the full albums, so I decided to create this script.
