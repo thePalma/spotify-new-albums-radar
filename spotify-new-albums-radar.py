@@ -45,6 +45,20 @@ try:
             continue
         new_album_releases.append(new_release['track']['album'])
 
+    if len(new_album_releases) == 0:
+        print('No new album releases found')
+        exit()
+
+    # Remove duplicates from the list of new album releases
+    new_album_releases = list({album['id']: album for album in new_album_releases}.values())
+
+    # Print the new album releases
+    print(f'{len(new_album_releases)} new albums released this week:\n')
+    i = 1
+    for album in new_album_releases:
+        print(f'{i}:\t{album["artists"][0]["name"]} released "{album["name"]}" on {album["release_date"]}\n')
+        i += 1
+
     tracks_to_add = []
 
     # Get all the tracks from the new album releases and save the URIs in a list
@@ -56,9 +70,11 @@ try:
     # Split the list of tracks into chunks of 100 elements
     # Spotify API only allows to add 100 tracks at a time
     splitted_track_to_add = divide_chunks(tracks_to_add, 100)
+    print('Creating New Album Releases playlist...')
     new_playlist = sp.user_playlist_create(user=username, name='New Album Releases', public=False)
 
     # Add the tracks to the new playlist
+    print(f'Adding {len(tracks_to_add)} tracks to the playlist...')
     for tracks_uri in splitted_track_to_add:
         sp.playlist_add_items(new_playlist['id'], tracks_uri)
 except Exception as e:
