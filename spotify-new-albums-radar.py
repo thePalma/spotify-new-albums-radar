@@ -2,81 +2,101 @@
 
 import os
 import spotipy
+from spotipy.oauth2 import SpotifyOAuth
 
 # Useful function to split a list into chunks of n elements
 def divide_chunks(l, n):
-    # looping till length l
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
-# Load spotify environment variables
-client_id = os.getenv('SPOTIPY_CLIENT_ID')
-client_secret = os.getenv('SPOTIPY_CLIENT_SECRET')
-redirect_uri = os.getenv('SPOTIPY_REDIRECT_URI')
-username = os.getenv('SPOTIFY_USERNAME')
+# Load environment variables
+def load_env_variables():
+    return {
+        'client_id': os.getenv('SPOTIPY_CLIENT_ID'),
+        'client_secret': os.getenv('SPOTIPY_CLIENT_SECRET'),
+        'redirect_uri': os.getenv('SPOTIPY_REDIRECT_URI'),
+        'username': os.getenv('SPOTIFY_USERNAME')
+    }
 
-# Login to the Spotify API
-scope = 'user-library-read user-library-modify playlist-modify-public playlist-modify-private playlist-read-private'
-token = spotipy.util.prompt_for_user_token(username, scope, client_id, client_secret, redirect_uri)
-sp = spotipy.Spotify(auth=token)
+# Authenticate with Spotify API
+def authenticate_spotify(env_vars):
+    scope = 'user-library-read user-library-modify playlist-modify-public playlist-modify-private playlist-read-private'
+    auth_manager = SpotifyOAuth(
+        client_id=env_vars['client_id'],
+        client_secret=env_vars['client_secret'],
+        redirect_uri=env_vars['redirect_uri'],
+        scope=scope,
+    )
+    return spotipy.Spotify(auth_manager=auth_manager)
 
-try:
-    playlists:dict = sp.current_user_playlists(limit=50, offset=0)
-    release_radar:dict = None
+def get_playlists(sp):
+    return sp.current_user_playlists(limit=50, offset=0)
 
-    # Find my Relead Radar playlist
+def find_playlist(playlists, name, sp):
     for playlist in playlists['items']:
-        if playlist['name'] == 'Release Radar':
-            release_radar = sp.playlist(playlist['id'])
-            break
-        if playlist['name'] == 'New Album Releases':
-            # Delete the old New Album Releases playlist if it exists
-            sp.user_playlist_unfollow(user=username, playlist_id=playlist['id'])
+        if playlist['name'] == name:
+            return sp.playlist(playlist['id'])
+    return None
 
-    if release_radar is None or release_radar['tracks']['total'] == 0:
-        print('Release Radar playlist not found or empty')
-        exit()
+def delete_playlist(sp, username, playlist_id):
+    sp.user_playlist_unfollow(user=username, playlist_id=playlist_id)
 
-    new_album_releases = []
+def create_playlist(sp, username, name):
+    return sp.user_playlist_create(user=username, name=name, public=False)
 
-    for new_release in release_radar['tracks']['items']:
-        # Assume that if the album has only one track, it's a single
-        if new_release['track']['album']['total_tracks'] == 1:
-            continue
-        new_album_releases.append(new_release['track']['album'])
+def get_album_tracks(sp, album_id):
+    return sp.album_tracks(album_id=album_id, limit=50, offset=0, market='US')['items']
 
-    if len(new_album_releases) == 0:
-        print('No new album releases found')
-        exit()
+def main():
+    env_vars = load_env_variables()
+    sp = authenticate_spotify(env_vars)
+    username = env_vars['username']
 
-    # Remove duplicates from the list of new album releases
-    new_album_releases = list({album['id']: album for album in new_album_releases}.values())
+    try:
+        playlists = get_playlists(sp)
+        release_radar = find_playlist(playlists, 'Release Radar', sp)
+        new_album_releases_playlist = find_playlist(playlists, 'New Album Releases', sp)
 
-    # Print the new album releases
-    print(f'{len(new_album_releases)} new albums released this week:\n')
-    i = 1
-    for album in new_album_releases:
-        print(f'{i}:\t{album["artists"][0]["name"]} released "{album["name"]}" on {album["release_date"]}\n')
-        i += 1
+        # Delete the New Album Releases playlist if it already exists
+        if new_album_releases_playlist:
+            delete_playlist(sp, username, new_album_releases_playlist['id'])
 
-    tracks_to_add = []
+        if not release_radar or release_radar['tracks']['total'] == 0:
+            print('Release Radar playlist not found or empty')
+            return
 
-    # Get all the tracks from the new album releases and save the URIs in a list
-    for album in new_album_releases:
-        album_tracks = sp.album_tracks(album_id=album['id'], limit=50, offset=0, market='US')
-        for track in album_tracks['items']:
-            tracks_to_add.append(track['uri'])
+        new_album_releases = [
+            track['track']['album'] for track in release_radar['tracks']['items']
+            # Filter out singles and EPs
+            if track['track']['album']['album_type'] == 'album'
+        ]
 
-    # Split the list of tracks into chunks of 100 elements
-    # Spotify API only allows to add 100 tracks at a time
-    splitted_track_to_add = divide_chunks(tracks_to_add, 100)
-    print('Creating New Album Releases playlist...')
-    new_playlist = sp.user_playlist_create(user=username, name='New Album Releases', public=False)
+        if not new_album_releases:
+            print('No new album releases found')
+            return
 
-    # Add the tracks to the new playlist
-    print(f'Adding {len(tracks_to_add)} tracks to the playlist...')
-    for tracks_uri in splitted_track_to_add:
-        sp.playlist_add_items(new_playlist['id'], tracks_uri)
-except Exception as e:
-    print(f'Error: {e}')
-    exit()
+        # Remove duplicates
+        new_album_releases = list({album['id']: album for album in new_album_releases}.values())
+
+        print(f'{len(new_album_releases)} new albums released this week:\n')
+        for i, album in enumerate(new_album_releases, start=1):
+            print(f'{i}:\t{album["artists"][0]["name"]} released "{album["name"]}" on {album["release_date"]}\n')
+
+        tracks_to_add = [track['uri'] for album in new_album_releases for track in get_album_tracks(sp, album['id'])]
+
+        # Split the tracks into chunks of 100 to avoid the "URI list too long" error
+        splitted_tracks_to_add = divide_chunks(tracks_to_add, 100)
+        print('Creating New Album Releases playlist...')
+        new_playlist = create_playlist(sp, username, 'New Album Releases')
+
+        print(f'Adding {len(tracks_to_add)} tracks to the playlist...')
+        for tracks_uri in splitted_tracks_to_add:
+            sp.playlist_add_items(new_playlist['id'], tracks_uri)
+
+    except spotipy.SpotifyException as e:
+        print(f'Spotify API Error: {e}')
+    except Exception as e:
+        print(f'Error: {e}')
+
+if __name__ == '__main__':
+    main()
